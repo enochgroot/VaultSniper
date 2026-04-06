@@ -100,12 +100,16 @@ public class VaultSniper {
 
             Object displayRaw = shared.getCompound("display_item");
             CompoundTag display = displayRaw instanceof Optional ? ((Optional<CompoundTag>)displayRaw).orElse(null) : (CompoundTag)displayRaw;
-            if (display == null || !display.contains("id")) return "";
-
-            // Read item id string directly from NBT — no ItemStack parsing needed
-            Tag idTag = display.get("id");
-            if (!(idTag instanceof StringTag st)) return "";
-            return st.value();
+            Tag displayTag = shared.get("display_item");
+            // MC 1.21+ can serialize item as just a string OR a compound {id:"...",count:1}
+            if (displayTag instanceof StringTag st) {
+                return st.value(); // simplified: "minecraft:heavy_core"
+            } else if (displayTag instanceof CompoundTag display) {
+                Tag idTag = display.get("id"); // full: {id: "minecraft:heavy_core", count: 1}
+                if (!(idTag instanceof StringTag idSt)) return "";
+                return idSt.value();
+            }
+            return "";
         } catch (Exception e) {
             return "";
         }
