@@ -6,6 +6,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -103,8 +104,8 @@ public class VaultSniper {
 
             // Read item id string directly from NBT — no ItemStack parsing needed
             Tag idTag = display.get("id");
-            if (idTag == null) return "";
-            return idTag.getAsString();
+            if (!(idTag instanceof StringTag st)) return "";
+            return st.value();
         } catch (Exception e) {
             return "";
         }
