@@ -2,6 +2,6 @@
   "required": false,
   "package": "com.vaultsniper.mixin",
   "compatibilityLevel": "JAVA_21",
-  "client": ["KeyMappingAccessor"],
+  "client": ["KeyMappingAccessor", "MinecraftAccessor"],
   "injectors": { "defaultRequire": 0 }
 }
