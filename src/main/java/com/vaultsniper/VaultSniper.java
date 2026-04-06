@@ -104,8 +104,8 @@ public class VaultSniper {
             // MC 1.21+ can serialize item as just a string OR a compound {id:"...",count:1}
             if (displayTag instanceof StringTag st) {
                 return st.value(); // simplified: "minecraft:heavy_core"
-            } else if (displayTag instanceof CompoundTag display) {
-                Tag idTag = display.get("id"); // full: {id: "minecraft:heavy_core", count: 1}
+            } else if (displayTag instanceof CompoundTag displayCompound) {
+                Tag idTag = displayCompound.get("id"); // full: {id: "minecraft:heavy_core", count: 1}
                 if (!(idTag instanceof StringTag idSt)) return "";
                 return idSt.value();
             }
