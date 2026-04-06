@@ -13,16 +13,20 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 
-import java.util.*;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public class VaultSniper {
     private static final VaultSniper INSTANCE = new VaultSniper();
     public static VaultSniper getInstance() { return INSTANCE; }
 
+    private static final long CLICK_DELAY_NS = 10_000_000L; // 10ms in nanoseconds
+
     private boolean active = false;
     private final List<String> targetItems = new CopyOnWriteArrayList<>();
-    private int clickCooldown = 0;
+    private long clickAt = -1; // nanoTime() when to fire, -1 = idle
     private String pendingItem = null;
     private boolean clickedThisReveal = false;
     private String lastSeenItem = "";
@@ -31,7 +35,7 @@ public class VaultSniper {
 
     public void toggle() {
         active = !active;
-        if (!active) { pendingItem = null; clickCooldown = 0; clickedThisReveal = false; }
+        if (!active) { pendingItem = null; clickAt = -1; clickedThisReveal = false; }
         System.out.println("[VaultSniper] " + (active ? "ACTIVE" : "DISABLED"));
     }
 
@@ -43,7 +47,14 @@ public class VaultSniper {
 
     public void tick(Minecraft mc) {
         if (!active || mc.player == null || mc.level == null) return;
-        if (clickCooldown > 0) { clickCooldown--; if (clickCooldown == 0 && pendingItem != null) fireClick(mc); return; }
+
+        // Check if a pending click has matured (10ms elapsed)
+        if (clickAt >= 0 && pendingItem != null) {
+            if (System.nanoTime() >= clickAt) {
+                fireClick(mc);
+            }
+            return; // wait for timer regardless
+        }
 
         HitResult hit = ((MinecraftAccessor)(Object)mc).vs_getHitResult();
         if (hit == null || hit.getType() == HitResult.Type.MISS) return;
@@ -56,17 +67,19 @@ public class VaultSniper {
         if (!id.equals(lastSeenItem)) { lastSeenItem = id; clickedThisReveal = false; }
         if (clickedThisReveal || !isTargeted(id)) return;
 
+        // Schedule click 10ms from now
         pendingItem = id;
-        clickCooldown = 1 + new Random().nextInt(3);
+        clickAt = System.nanoTime() + CLICK_DELAY_NS;
     }
 
     private void fireClick(Minecraft mc) {
         HitResult hit = ((MinecraftAccessor)(Object)mc).vs_getHitResult();
-        if (mc.player == null || !(hit instanceof BlockHitResult bhr) || !isVault(mc, bhr.getBlockPos())) { pendingItem = null; return; }
+        if (mc.player == null || !(hit instanceof BlockHitResult bhr) || !isVault(mc, bhr.getBlockPos())) { pendingItem = null; clickAt = -1; return; }
         ((KeyMappingAccessor)mc.options.keyUse).vs_setClickCount(((KeyMappingAccessor)mc.options.keyUse).vs_getClickCount() + 1);
         System.out.println("[VaultSniper] Clicked for: " + pendingItem);
         clickedThisReveal = true;
         pendingItem = null;
+        clickAt = -1;
     }
 
     /** Vault detection via registry key string — avoids hardcoded Mojang field names */
