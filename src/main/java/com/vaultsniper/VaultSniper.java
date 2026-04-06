@@ -1,19 +1,15 @@
 package com.vaultsniper;
 
-import com.vaultsniper.mixin.SharedDataAccessor;
-import com.vaultsniper.mixin.VaultBlockEntityAccessor;
+import com.vaultsniper.mixin.KeyMappingAccessor;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.phys.BlockHitResult;
-import net.minecraft.phys.HitResult;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.InteractionHand;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.block.entity.VaultBlockEntity;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -25,121 +21,109 @@ public class VaultSniper {
     private boolean active = false;
     private final List<String> targetItems = new CopyOnWriteArrayList<>();
 
-    // Reaction delay: 1-4 ticks (50-200ms) — looks human, avoids 0-tick detection
+    // Human-like reaction: 1-3 ticks delay after spotting target
     private int clickCooldown = 0;
-    private String pendingClick = null; // item we matched and are about to click for
+    private String pendingItem = null;
+    private boolean clickedThisSession = false; // prevent spam-clicking same item
 
     private VaultSniper() {}
 
     public void toggle() {
         active = !active;
-        if (!active) { pendingClick = null; clickCooldown = 0; }
+        if (!active) { pendingItem = null; clickCooldown = 0; clickedThisSession = false; }
         System.out.println("[VaultSniper] " + (active ? "ACTIVE" : "DISABLED"));
     }
 
     public boolean isActive() { return active; }
-
-    public void addTarget(String itemId) {
-        String norm = normalise(itemId);
-        if (!norm.isEmpty() && !targetItems.contains(norm)) {
-            targetItems.add(norm);
-        }
-    }
-
-    public void removeTarget(String itemId) { targetItems.remove(normalise(itemId)); }
+    public void addTarget(String itemId) { String n = norm(itemId); if (!n.isEmpty() && !targetItems.contains(n)) targetItems.add(n); }
+    public void removeTarget(String itemId) { targetItems.remove(norm(itemId)); }
     public List<String> getTargets() { return Collections.unmodifiableList(targetItems); }
     public void clearTargets() { targetItems.clear(); }
 
-    /** Called every client tick */
     public void tick(Minecraft mc) {
-        if (!active || mc.player == null || mc.level == null || mc.gameMode == null) return;
+        if (!active || mc.player == null || mc.level == null) return;
 
-        // Count down reaction delay
+        // Cooldown ticking down → fire click when it hits 0
         if (clickCooldown > 0) {
             clickCooldown--;
-            if (clickCooldown == 0 && pendingClick != null) {
-                doClick(mc);
-                pendingClick = null;
+            if (clickCooldown == 0 && pendingItem != null) {
+                fireClick(mc);
             }
             return;
         }
 
-        // Player must be looking at a vault block
-        HitResult hit = mc.hitResult;
-        if (!(hit instanceof BlockHitResult bhr)) return;
+        // Must be looking at a vault block
+        if (!(mc.hitResult instanceof BlockHitResult bhr)) return;
         if (bhr.getType() == HitResult.Type.MISS) return;
 
         BlockPos pos = bhr.getBlockPos();
         var state = mc.level.getBlockState(pos);
-        if (!state.is(Blocks.VAULT) && !state.is(Blocks.OMINOUS_VAULT)) return;
+        boolean isVault = state.is(Blocks.VAULT) || state.is(Blocks.OMINOUS_VAULT);
+        if (!isVault) { clickedThisSession = false; return; } // reset when leaving vault
 
-        // Get the vault's displayed item
-        BlockEntity be = mc.level.getBlockEntity(pos);
-        if (!(be instanceof VaultBlockEntity vault)) return;
+        // Read display item via NBT (works client-side, no class import needed)
+        ItemStack displayed = getDisplayItemNBT(mc, pos);
+        if (displayed.isEmpty()) return;
 
-        VaultBlockEntity.SharedData shared = ((VaultBlockEntityAccessor) vault).vs_getSharedData();
-        if (shared == null) return;
+        String id = itemId(displayed);
+        if (!isTargeted(id)) { clickedThisSession = false; return; }
+        if (clickedThisSession) return; // already clicked this reveal
 
-        ItemStack displayed = ((SharedDataAccessor)(Object)shared).vs_getDisplayItem();
-        if (displayed == null || displayed.isEmpty()) return;
-
-        String displayedId = itemId(displayed);
-        if (!isTargeted(displayedId)) return;
-
-        // Match! Queue a click with a small human-like reaction delay (1-4 ticks)
-        pendingClick = displayedId;
-        clickCooldown = 1 + new Random().nextInt(3); // 1-3 ticks = 50-150ms
+        // Target found! Queue click with human-like reaction delay
+        pendingItem = id;
+        clickCooldown = 1 + new Random().nextInt(3); // 50-150ms
     }
 
-    private void doClick(Minecraft mc) {
-        if (mc.player == null || mc.gameMode == null || mc.hitResult == null) return;
-        if (!(mc.hitResult instanceof BlockHitResult bhr)) return;
+    private void fireClick(Minecraft mc) {
+        if (mc.player == null || mc.hitResult == null) { pendingItem = null; return; }
+        if (!(mc.hitResult instanceof BlockHitResult bhr)) { pendingItem = null; return; }
 
-        // Validate still looking at vault
         var state = mc.level.getBlockState(bhr.getBlockPos());
-        if (!state.is(Blocks.VAULT) && !state.is(Blocks.OMINOUS_VAULT)) return;
+        if (!state.is(Blocks.VAULT) && !state.is(Blocks.OMINOUS_VAULT)) { pendingItem = null; return; }
 
-        // Fire a completely normal right-click interact — identical to player input
-        mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, bhr);
-        System.out.println("[VaultSniper] Clicked for: " + pendingClick);
+        // Trigger use key exactly like a real player right-click
+        ((KeyMappingAccessor)mc.options.keyUse).vs_setClickCount(
+            ((KeyMappingAccessor)mc.options.keyUse).vs_getClickCount() + 1);
+
+        System.out.println("[VaultSniper] Clicked for: " + pendingItem);
+        clickedThisSession = true;
+        pendingItem = null;
     }
 
-    private boolean isTargeted(String itemId) {
-        if (targetItems.isEmpty()) return false;
+    private static ItemStack getDisplayItemNBT(Minecraft mc, BlockPos pos) {
+        try {
+            BlockEntity be = mc.level.getBlockEntity(pos);
+            if (be == null) return ItemStack.EMPTY;
+            CompoundTag nbt = be.saveWithoutMetadata(mc.level.registryAccess());
+            // Vault stores display item in shared_data.display_item
+            if (nbt.contains("shared_data")) {
+                CompoundTag shared = nbt.getCompound("shared_data");
+                if (shared.contains("display_item")) {
+                    return ItemStack.parseOptional(mc.level.registryAccess(), shared.getCompound("display_item"));
+                }
+            }
+        } catch (Exception ignored) {}
+        return ItemStack.EMPTY;
+    }
+
+    private boolean isTargeted(String id) {
         for (String t : targetItems) {
-            if (itemId.equals(t) || itemId.endsWith(":" + t)) return true;
+            if (id.equals(t) || id.endsWith(":" + t) || id.contains(t)) return true;
         }
         return false;
     }
 
-    private static String itemId(ItemStack stack) {
-        return BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
-    }
-
-    private static String normalise(String raw) {
-        return raw.trim().toLowerCase().replace(" ", "_");
-    }
+    private static String itemId(ItemStack s) { return BuiltInRegistries.ITEM.getKey(s.getItem()).toString(); }
+    private static String norm(String s) { return s.trim().toLowerCase().replace(" ", "_"); }
 
     public String getStatus(Minecraft mc) {
         if (!active) return "OFF";
-        if (mc.hitResult instanceof BlockHitResult bhr && mc.level != null) {
-            var state = mc.level.getBlockState(bhr.getBlockPos());
-            if (state.is(Blocks.VAULT) || state.is(Blocks.OMINOUS_VAULT)) {
-                BlockEntity be = mc.level.getBlockEntity(bhr.getBlockPos());
-                if (be instanceof VaultBlockEntity vault) {
-                    VaultBlockEntity.SharedData shared = ((VaultBlockEntityAccessor) vault).vs_getSharedData();
-                    if (shared != null) {
-                        ItemStack displayed = ((SharedDataAccessor)(Object)shared).vs_getDisplayItem();
-                        if (displayed != null && !displayed.isEmpty()) {
-                            String id = itemId(displayed);
-                            boolean targeted = isTargeted(id);
-                            return "Watching — " + id + (targeted ? " ← TARGET!" : "");
-                        }
-                    }
-                    return "Watching vault...";
-                }
-            }
-        }
-        return "Active — aim at a vault";
+        if (mc.level == null || !(mc.hitResult instanceof BlockHitResult bhr)) return "Active — aim at a vault";
+        var state = mc.level.getBlockState(bhr.getBlockPos());
+        if (!state.is(Blocks.VAULT) && !state.is(Blocks.OMINOUS_VAULT)) return "Active — aim at a vault";
+        ItemStack d = getDisplayItemNBT(mc, bhr.getBlockPos());
+        if (d.isEmpty()) return "Watching vault... (no display item yet)";
+        String id = itemId(d);
+        return "Showing: " + id + (isTargeted(id) ? "  ← TARGET! CLICKING!" : "");
     }
 }
