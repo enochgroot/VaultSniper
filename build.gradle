@@ -1,0 +1,13 @@
+plugins { id 'net.fabricmc.fabric-loom-remap' version '1.14-SNAPSHOT' }
+version = '1.0.0'
+group = 'com.vaultsniper'
+base { archivesName = 'vaultsniper' }
+repositories { mavenCentral() }
+dependencies {
+    minecraft         "com.mojang:minecraft:1.21.11"
+    mappings          loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:0.18.2"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:0.141.3+1.21.11"
+}
+java { sourceCompatibility = targetCompatibility = JavaVersion.VERSION_21; withSourcesJar() }
+tasks.withType(JavaCompile).configureEach { options.release = 21 }

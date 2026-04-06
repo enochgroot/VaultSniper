@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "vaultsniper",
+  "version": "1.0.0",
+  "name": "VaultSniper",
+  "description": "Auto-clicks vaults when your target item appears. Client-side only.",
+  "authors": ["You"],
+  "environment": "client",
+  "entrypoints": { "client": ["com.vaultsniper.VaultSniperMod"] },
+  "mixins": ["vaultsniper.mixins.json"],
+  "depends": { "fabricloader": ">=0.16.0", "fabric-api": "*", "minecraft": "~1.21.11" }
+}

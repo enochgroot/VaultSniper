@@ -1,0 +1,7 @@
+{
+  "required": false,
+  "package": "com.vaultsniper.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": ["VaultBlockEntityAccessor", "SharedDataAccessor"],
+  "injectors": { "defaultRequire": 0 }
+}
