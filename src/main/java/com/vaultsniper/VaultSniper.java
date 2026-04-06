@@ -7,8 +7,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.Tag;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.BlockHitResult;
@@ -44,100 +42,89 @@ public class VaultSniper {
 
     public void tick(Minecraft mc) {
         if (!active || mc.player == null || mc.level == null) return;
+        if (clickCooldown > 0) { clickCooldown--; if (clickCooldown == 0 && pendingItem != null) fireClick(mc); return; }
 
-        if (clickCooldown > 0) {
-            clickCooldown--;
-            if (clickCooldown == 0 && pendingItem != null) fireClick(mc);
-            return;
-        }
-
-        // Get hit result via accessor (field is private in 1.21.11)
         HitResult hit = ((MinecraftAccessor)(Object)mc).vs_getHitResult();
         if (hit == null || hit.getType() == HitResult.Type.MISS) return;
         if (!(hit instanceof BlockHitResult bhr)) return;
-
         BlockPos pos = bhr.getBlockPos();
-        if (!isVaultBlock(mc, pos)) { clickedThisReveal = false; lastSeenItem = ""; return; }
+        if (!isVault(mc, pos)) { clickedThisReveal = false; lastSeenItem = ""; return; }
 
-        String id = getDisplayItemId(mc, pos);
+        String id = displayItem(mc, pos);
         if (id.isEmpty()) return;
-
         if (!id.equals(lastSeenItem)) { lastSeenItem = id; clickedThisReveal = false; }
         if (clickedThisReveal || !isTargeted(id)) return;
 
         pendingItem = id;
-        clickCooldown = 1 + new Random().nextInt(3); // 50-150ms human delay
+        clickCooldown = 1 + new Random().nextInt(3);
     }
 
     private void fireClick(Minecraft mc) {
-        if (mc.player == null) { pendingItem = null; return; }
         HitResult hit = ((MinecraftAccessor)(Object)mc).vs_getHitResult();
-        if (!(hit instanceof BlockHitResult bhr)) { pendingItem = null; return; }
-        if (!isVaultBlock(mc, bhr.getBlockPos())) { pendingItem = null; return; }
-
-        ((KeyMappingAccessor)mc.options.keyUse).vs_setClickCount(
-            ((KeyMappingAccessor)mc.options.keyUse).vs_getClickCount() + 1);
-
+        if (mc.player == null || !(hit instanceof BlockHitResult bhr) || !isVault(mc, bhr.getBlockPos())) { pendingItem = null; return; }
+        ((KeyMappingAccessor)mc.options.keyUse).vs_setClickCount(((KeyMappingAccessor)mc.options.keyUse).vs_getClickCount() + 1);
         System.out.println("[VaultSniper] Clicked for: " + pendingItem);
         clickedThisReveal = true;
         pendingItem = null;
     }
 
-    /** Check if a block is a vault using registry (avoids hardcoded Mojang field names) */
-    private static boolean isVaultBlock(Minecraft mc, BlockPos pos) {
+    /** Vault detection via registry key string — avoids hardcoded Mojang field names */
+    private static boolean isVault(Minecraft mc, BlockPos pos) {
         try {
             Block block = mc.level.getBlockState(pos).getBlock();
-            ResourceLocation key = BuiltInRegistries.BLOCK.getKey(block);
-            if (key == null) return false;
-            String path = key.getPath();
-            return path.equals("vault") || path.equals("ominous_vault");
+            String key = BuiltInRegistries.BLOCK.getKey(block).toString();
+            return key.contains("vault");
         } catch (Exception e) { return false; }
     }
 
-    /** Read vault display item from synced block entity NBT */
-    public static String getDisplayItemId(Minecraft mc, BlockPos pos) {
+    /** Read vault display item from NBT.
+     *  API in 1.21.11:
+     *    saveWithoutMetadata() → CompoundTag  (direct)
+     *    getCompound(key)      → Optional<CompoundTag>
+     *    Tag.getAsString()     → String
+     */
+    @SuppressWarnings("unchecked")
+    public static String displayItem(Minecraft mc, BlockPos pos) {
         try {
             BlockEntity be = mc.level.getBlockEntity(pos);
             if (be == null) return "";
-            // saveWithoutMetadata returns Optional<CompoundTag> in 1.21.11
-            Optional<CompoundTag> optNbt = be.saveWithoutMetadata(mc.level.registryAccess());
-            if (optNbt.isEmpty()) return "";
-            CompoundTag nbt = optNbt.get();
+            // saveWithoutMetadata returns CompoundTag directly in 1.21.11
+            CompoundTag root = be.saveWithoutMetadata(mc.level.registryAccess());
+            if (!root.contains("shared_data")) return "";
 
-            if (!nbt.contains("shared_data")) return "";
-            CompoundTag shared = nbt.getCompound("shared_data"); // returns CompoundTag directly
+            // getCompound returns Optional<CompoundTag> in 1.21.11
+            Object sharedRaw = root.getCompound("shared_data");
+            CompoundTag shared = sharedRaw instanceof Optional ? ((Optional<CompoundTag>)sharedRaw).orElse(null) : (CompoundTag)sharedRaw;
+            if (shared == null || !shared.contains("display_item")) return "";
 
-            Tag displayTag = shared.get("display_item");
-            if (!(displayTag instanceof CompoundTag displayNbt)) return "";
+            Object displayRaw = shared.getCompound("display_item");
+            CompoundTag display = displayRaw instanceof Optional ? ((Optional<CompoundTag>)displayRaw).orElse(null) : (CompoundTag)displayRaw;
+            if (display == null || !display.contains("id")) return "";
 
-            Optional<ItemStack> optStack = ItemStack.parse(mc.level.registryAccess(), displayNbt);
-            if (optStack.isEmpty()) return "";
-            ItemStack stack = optStack.get();
-            if (stack.isEmpty()) return "";
-            return BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+            // Read item id string directly from NBT — no ItemStack parsing needed
+            Tag idTag = display.get("id");
+            if (idTag == null) return "";
+            return idTag.getAsString();
         } catch (Exception e) {
             return "";
         }
     }
 
     private boolean isTargeted(String id) {
-        for (String t : targetItems) {
-            if (id.equals(t) || id.endsWith(":" + t) || id.contains(t)) return true;
-        }
+        for (String t : targetItems) { if (id.equals(t) || id.endsWith(":" + t) || id.contains(t)) return true; }
         return false;
     }
 
-    private static String norm(String s) { return s.trim().toLowerCase().replace(" ", "_"); }
+    private static String norm(String s) { return s.trim().toLowerCase().replace(" ","_"); }
 
     public String getStatus(Minecraft mc) {
         if (!active) return "OFF";
         if (mc.level == null) return "Active — aim at a vault";
         HitResult hit = ((MinecraftAccessor)(Object)mc).vs_getHitResult();
-        if (hit == null || hit.getType() == HitResult.Type.MISS || !(hit instanceof BlockHitResult bhr))
-            return "Active — aim at a vault";
-        if (!isVaultBlock(mc, bhr.getBlockPos())) return "Active — aim at a vault";
-        String id = getDisplayItemId(mc, bhr.getBlockPos());
+        if (hit == null || hit.getType() == HitResult.Type.MISS || !(hit instanceof BlockHitResult bhr)) return "Active — aim at a vault";
+        if (!isVault(mc, bhr.getBlockPos())) return "Active — aim at a vault";
+        String id = displayItem(mc, bhr.getBlockPos());
         if (id.isEmpty()) return "Watching vault...";
-        return "Showing: " + id + (isTargeted(id) ? " ← CLICKING!" : "");
+        return "Showing: " + id + (isTargeted(id) ? " <- CLICKING!" : "");
     }
 }
